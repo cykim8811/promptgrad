@@ -46,3 +46,39 @@ async def health() -> JSONResponse:
             status_code=503, content={"status": "error", "detail": "database"}
         )
     return JSONResponse(content={"status": "ok"})
+
+
+@app.get("/api/_diag/llm")
+async def diag_llm() -> JSONResponse:
+    """TEMPORARY diagnostic — verifies the managed LLM call path."""
+    import os
+    import traceback
+
+    from app.core import llm as _llm
+    from app.core.config import settings
+
+    base = os.environ.get("ANTHROPIC_BASE_URL", "")
+    info = {
+        "base_url_set": bool(base),
+        "base_url": base,
+        "key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "default_model": settings.default_model,
+    }
+    try:
+        client = _llm._get_client()
+        msg = await client.messages.create(
+            model=settings.default_model,
+            max_tokens=32,
+            messages=[{"role": "user", "content": "Reply with the single word: ok"}],
+        )
+        text_out = "".join(b.text for b in msg.content if b.type == "text")
+        return JSONResponse(content={"ok": True, "text": text_out, **info})
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(
+            content={
+                "ok": False,
+                "error": repr(e),
+                "tb": traceback.format_exc()[-1500:],
+                **info,
+            }
+        )
