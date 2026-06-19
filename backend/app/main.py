@@ -64,6 +64,10 @@ async def diag_llm() -> JSONResponse:
         "key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
         "default_model": settings.default_model,
     }
+    from app.routes.prompts import get_active_prompt
+
+    out: dict = {**info}
+    # 1) plain call
     try:
         client = _llm._get_client()
         msg = await client.messages.create(
@@ -71,14 +75,35 @@ async def diag_llm() -> JSONResponse:
             max_tokens=32,
             messages=[{"role": "user", "content": "Reply with the single word: ok"}],
         )
-        text_out = "".join(b.text for b in msg.content if b.type == "text")
-        return JSONResponse(content={"ok": True, "text": text_out, **info})
+        out["plain"] = {
+            "ok": True,
+            "text": "".join(b.text for b in msg.content if b.type == "text"),
+        }
     except Exception as e:  # noqa: BLE001
-        return JSONResponse(
-            content={
-                "ok": False,
-                "error": repr(e),
-                "tb": traceback.format_exc()[-1500:],
-                **info,
-            }
+        out["plain"] = {"ok": False, "error": repr(e)}
+
+    # 2) full run_generator path with the active generator prompt
+    async with AsyncSessionLocal() as session:
+        gen = await get_active_prompt(session, "generator")
+    if gen is None:
+        out["generator"] = {"ok": False, "error": "no active generator prompt"}
+        return JSONResponse(content=out)
+    out["generator_model"] = gen.model
+    try:
+        a, b, raw = await _llm.run_generator(
+            template=gen.template,
+            model=gen.model,
+            max_tokens=gen.max_tokens,
+            temperature=gen.temperature,
+            spec="물이 끓는 이유",
+            audience="중학생",
+            coders_user=None,
         )
+        out["generator"] = {"ok": True, "a_len": len(a), "b_len": len(b)}
+    except Exception as e:  # noqa: BLE001
+        out["generator"] = {
+            "ok": False,
+            "error": repr(e),
+            "tb": traceback.format_exc()[-1500:],
+        }
+    return JSONResponse(content=out)
