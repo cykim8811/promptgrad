@@ -21,6 +21,41 @@ import {
   type Stats,
 } from "@/lib/api";
 
+type Preset = { label: string; spec: string; audience: string };
+
+const PRESETS: Preset[] = [
+  {
+    label: "역전파",
+    spec: "신경망의 역전파(Back Propagation)가 무엇이고, 왜 그리고 어떻게 동작하는가. 손실(loss)을 출력에서 입력 방향으로 전파하면서, 각 가중치가 손실에 얼마나 기여했는지(기울기)를 연쇄법칙으로 계산하고, 그 기울기로 가중치를 조금씩 갱신해 학습이 이루어지는 원리.",
+    audience: "미적분의 연쇄법칙은 알지만 딥러닝은 처음인 학부생",
+  },
+  {
+    label: "재귀",
+    spec: "재귀(recursion)란 무엇이고 왜 동작하는가. 함수가 자기 자신을 호출해 문제를 더 작은 같은 종류의 문제로 환원하는 방식과, 무한히 내려가지 않게 하는 베이스 케이스의 역할.",
+    audience: "프로그래밍을 처음 배우는 고등학생",
+  },
+  {
+    label: "베이즈 정리",
+    spec: "베이즈 정리가 무엇이고 직관적으로 왜 성립하는가. 사전확률을 새로운 증거로 갱신해 사후확률을 얻는 과정과, 분모(전체 증거 확률)가 하는 역할.",
+    audience: "확률의 기초(조건부확률)만 아는 일반 성인",
+  },
+  {
+    label: "정보 엔트로피",
+    spec: "정보 엔트로피가 무엇을 측정하는가. '평균적인 놀라움/불확실성'이라는 직관과, 왜 확률에 로그를 취해 정의하는가.",
+    audience: "고등학교 수학(로그)을 마친 학생",
+  },
+  {
+    label: "어텐션",
+    spec: "트랜스포머의 self-attention이 무엇을 하는가. 각 토큰이 query/key/value를 통해 다른 토큰들을 가중 참조해 문맥을 모으는 메커니즘과, 그것이 왜 강력한가.",
+    audience: "기본적인 신경망은 아는 개발자",
+  },
+  {
+    label: "복리",
+    spec: "복리가 단리와 어떻게 다르고, 왜 장기적으로는 폭발적으로 커지는가. 이자가 다시 이자를 낳는 구조와 지수적 성장의 직관.",
+    audience: "금융 지식이 거의 없는 사회초년생",
+  },
+];
+
 export default function HomePage() {
   return (
     <div className="space-y-12 pt-4">
@@ -101,6 +136,35 @@ function NewSession() {
       onSubmit={onSubmit}
       className="space-y-4 rounded-xl border p-5 transition-colors focus-within:border-foreground/30"
     >
+      <div className="space-y-2">
+        <span className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+          프리셋 명세
+        </span>
+        <div className="flex flex-wrap gap-1.5">
+          {PRESETS.map((p) => {
+            const active = spec === p.spec;
+            return (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => {
+                  setSpec(p.spec);
+                  setAudience(p.audience);
+                }}
+                className={cn(
+                  "rounded-full border px-3 py-1 text-[13px] transition-colors",
+                  active
+                    ? "border-foreground bg-foreground text-background"
+                    : "text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+                )}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="space-y-1.5">
         <label className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
           명세 — 이해시키고자 하는 대상 지식
