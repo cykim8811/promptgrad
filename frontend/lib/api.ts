@@ -53,6 +53,7 @@ export type SessionDetail = {
   evaluation: Evaluation | null;
   feedback: Feedback | null;
   agreement: boolean | null;
+  archived: boolean;
 };
 
 export type SessionSummary = {
@@ -63,6 +64,7 @@ export type SessionSummary = {
   has_evaluation: boolean;
   has_feedback: boolean;
   agreement: boolean | null;
+  archived: boolean;
   created_at: string | null;
 };
 
@@ -161,8 +163,21 @@ export async function submitFeedback(
   );
 }
 
-export async function fetchSessions(): Promise<SessionSummary[]> {
-  return tracked(async () => jsonOrThrow(await fetch("/api/sessions", GET)));
+export async function fetchSessions(
+  archived = false
+): Promise<SessionSummary[]> {
+  return tracked(async () =>
+    jsonOrThrow(await fetch(`/api/sessions?archived=${archived}`, GET))
+  );
+}
+
+export async function setSessionArchived(
+  id: string,
+  archived: boolean
+): Promise<SessionDetail> {
+  return tracked(async () =>
+    jsonOrThrow(await fetch(`/api/sessions/${id}/archive`, POST({ archived })))
+  );
 }
 
 export async function fetchStats(): Promise<Stats> {

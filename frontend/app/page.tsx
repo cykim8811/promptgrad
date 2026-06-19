@@ -272,20 +272,40 @@ function ModelSelect({
 }
 
 function Recent() {
+  const [view, setView] = useState<"active" | "archived">("active");
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
 
   useEffect(() => {
-    fetchSessions().then(setSessions).catch(() => setSessions([]));
+    setSessions(null);
+    fetchSessions(view === "archived")
+      .then(setSessions)
+      .catch(() => setSessions([]));
+  }, [view]);
+
+  useEffect(() => {
     fetchStats().then(setStats).catch(() => {});
   }, []);
 
   return (
     <section className="space-y-4">
-      <div className="flex items-end justify-between">
-        <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-          최근 세션
-        </h2>
+      <div className="flex items-end justify-between gap-3">
+        <div className="inline-flex rounded-lg border p-0.5">
+          {(["active", "archived"] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={cn(
+                "rounded-md px-3 py-1 text-[12px] font-medium transition-colors",
+                view === v
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {v === "active" ? "세션" : "보관함"}
+            </button>
+          ))}
+        </div>
         {stats && <StatsLine stats={stats} />}
       </div>
       <ul className="space-y-1">
@@ -301,7 +321,9 @@ function Recent() {
         )}
         {sessions && sessions.length === 0 && (
           <li className="rounded-md border border-dashed bg-muted/40 px-5 py-8 text-center text-[13px] text-muted-foreground">
-            아직 세션이 없습니다. 위에서 첫 명세를 입력해 보세요.
+            {view === "archived"
+              ? "보관한 세션이 없습니다."
+              : "아직 세션이 없습니다. 위에서 첫 명세를 입력해 보세요."}
           </li>
         )}
         {sessions?.map((s) => (

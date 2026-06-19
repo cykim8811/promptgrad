@@ -85,6 +85,9 @@ class Session(Base):
         sa.String(16), nullable=False, default="generating", index=True
     )
     error: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    archived: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false(), index=True
+    )
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )

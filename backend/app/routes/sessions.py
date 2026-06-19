@@ -80,6 +80,7 @@ def session_detail(s: Session, prompts: dict[UUID, Prompt]) -> dict:
         "audience": s.audience,
         "status": s.status,
         "error": s.error,
+        "archived": s.archived,
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "candidate_a": parse_cards(cand["A"]) if "A" in cand else [],
         "candidate_b": parse_cards(cand["B"]) if "B" in cand else [],
@@ -333,11 +334,33 @@ async def submit_feedback(
     return session_detail(s, prompts)
 
 
+class ArchiveIn(BaseModel):
+    archived: bool = True
+
+
+@router.post("/sessions/{session_id}/archive")
+async def archive_session(
+    session_id: UUID,
+    body: ArchiveIn,
+    _: UUID = Depends(require_identity),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    s = await _get_full_session(session, session_id)
+    s.archived = body.archived
+    await session.flush()
+    s = await _get_full_session(session, s.id)
+    prompts = await _load_prompts(
+        session, {s.generator_prompt_id, s.evaluator_prompt_id}
+    )
+    return session_detail(s, prompts)
+
+
 # ---- listing + stats -----------------------------------------------------
 
 
 @router.get("/sessions")
 async def list_sessions(
+    archived: bool = False,
     session: AsyncSession = Depends(get_session),
     _: UUID | None = Depends(optional_identity),
 ) -> list[dict]:
@@ -347,6 +370,7 @@ async def list_sessions(
             selectinload(Session.evaluation),
             selectinload(Session.feedback),
         )
+        .where(Session.archived.is_(archived))
         .order_by(desc(Session.created_at))
         .limit(60)
     )
@@ -363,6 +387,7 @@ async def list_sessions(
                 "has_evaluation": ev is not None,
                 "has_feedback": fb is not None,
                 "agreement": agreement,
+                "archived": s.archived,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
             }
         )

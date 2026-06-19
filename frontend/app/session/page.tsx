@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ArrowLeft, Check, Loader2 } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowLeft, Check, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,6 +15,7 @@ import { useMe } from "@/lib/identity";
 import {
   evaluateSession,
   fetchSession,
+  setSessionArchived,
   submitFeedback,
   type Card,
   type SessionDetail,
@@ -94,7 +95,10 @@ function SessionView() {
 
   return (
     <div className="space-y-8 pt-6">
-      <BackLink />
+      <div className="flex items-center justify-between gap-3">
+        <BackLink />
+        <ArchiveButton session={session} onUpdate={setSession} />
+      </div>
 
       {/* Spec */}
       <section className="space-y-3 rounded-xl border p-5">
@@ -173,6 +177,51 @@ function SessionView() {
       {/* Human feedback */}
       <FeedbackPanel session={session} onUpdate={setSession} />
     </div>
+  );
+}
+
+function ArchiveButton({
+  session,
+  onUpdate,
+}: {
+  session: SessionDetail;
+  onUpdate: (s: SessionDetail) => void;
+}) {
+  const me = useMe();
+  const [busy, setBusy] = useState(false);
+  if (!me) return null;
+
+  async function toggle() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const updated = await setSessionArchived(session.id, !session.archived);
+      onUpdate(updated);
+    } catch {
+      /* ignore */
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      onClick={toggle}
+      disabled={busy}
+      className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+    >
+      {session.archived ? (
+        <>
+          <ArchiveRestore className="size-3.5" />
+          보관 해제
+        </>
+      ) : (
+        <>
+          <Archive className="size-3.5" />
+          보관
+        </>
+      )}
+    </button>
   );
 }
 
