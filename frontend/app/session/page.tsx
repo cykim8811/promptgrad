@@ -16,6 +16,7 @@ import {
   evaluateSession,
   fetchSession,
   submitFeedback,
+  type Card,
   type SessionDetail,
 } from "@/lib/api";
 
@@ -163,11 +164,7 @@ function SessionView() {
           )}
         </div>
 
-        <div className="rounded-xl border p-5 sm:p-6">
-          <Markdown>
-            {(tab === "A" ? session.candidate_a : session.candidate_b) || ""}
-          </Markdown>
-        </div>
+        <CardStack cards={tab === "A" ? session.candidate_a : session.candidate_b} />
       </section>
 
       {/* Evaluator verdict */}
@@ -176,6 +173,36 @@ function SessionView() {
       {/* Human feedback */}
       <FeedbackPanel session={session} onUpdate={setSession} />
     </div>
+  );
+}
+
+function CardStack({ cards }: { cards: Card[] }) {
+  if (!cards || cards.length === 0)
+    return (
+      <div className="rounded-xl border border-dashed px-5 py-8 text-center text-[13px] text-muted-foreground">
+        내용이 없습니다.
+      </div>
+    );
+  return (
+    <ol className="space-y-3">
+      {cards.map((card, i) => (
+        <li key={i} className="rounded-xl border p-5 sm:p-6">
+          <div className="flex items-baseline gap-2.5">
+            <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-foreground text-[11px] font-semibold tabular-nums text-background">
+              {i + 1}
+            </span>
+            {card.title && (
+              <h3 className="text-[15px] font-semibold leading-snug">{card.title}</h3>
+            )}
+          </div>
+          {card.body && (
+            <div className="mt-2 pl-[30px]">
+              <Markdown>{card.body}</Markdown>
+            </div>
+          )}
+        </li>
+      ))}
+    </ol>
   );
 }
 

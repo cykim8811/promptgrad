@@ -21,6 +21,11 @@ export type Prompt = {
   created_at: string | null;
 };
 
+export type Card = {
+  title: string;
+  body: string;
+};
+
 export type Evaluation = {
   winner: "A" | "B";
   reason: string;
@@ -41,8 +46,8 @@ export type SessionDetail = {
   status: string;
   error: string;
   created_at: string | null;
-  candidate_a: string;
-  candidate_b: string;
+  candidate_a: Card[];
+  candidate_b: Card[];
   generator: Prompt | null;
   evaluator: Prompt | null;
   evaluation: Evaluation | null;

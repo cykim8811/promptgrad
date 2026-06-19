@@ -10,6 +10,7 @@ GET  /api/stats               dataset-level stats (evaluator↔human agreement)
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -35,6 +36,35 @@ def _candidates_map(s: Session) -> dict[str, str]:
     return {c.label: c.content for c in s.candidates}
 
 
+def parse_cards(content: str) -> list[dict]:
+    """A candidate is stored as a JSON array of {title, body} step cards.
+
+    Falls back to a single card for legacy plain-text/markdown content.
+    """
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return [{"title": "", "body": content or ""}]
+    if isinstance(data, list):
+        out = [
+            {"title": str(it.get("title", "")), "body": str(it.get("body", ""))}
+            for it in data
+            if isinstance(it, dict)
+        ]
+        return out or [{"title": "", "body": content}]
+    return [{"title": "", "body": content or ""}]
+
+
+def cards_to_text(cards: list[dict]) -> str:
+    """Flatten step cards into markdown for the Evaluator."""
+    parts = []
+    for c in cards:
+        title = c.get("title", "").strip()
+        body = c.get("body", "").strip()
+        parts.append(f"### {title}\n{body}" if title else body)
+    return "\n\n".join(p for p in parts if p)
+
+
 def session_detail(s: Session, prompts: dict[UUID, Prompt]) -> dict:
     cand = _candidates_map(s)
     ev = s.evaluation
@@ -51,8 +81,8 @@ def session_detail(s: Session, prompts: dict[UUID, Prompt]) -> dict:
         "status": s.status,
         "error": s.error,
         "created_at": s.created_at.isoformat() if s.created_at else None,
-        "candidate_a": cand.get("A", ""),
-        "candidate_b": cand.get("B", ""),
+        "candidate_a": parse_cards(cand["A"]) if "A" in cand else [],
+        "candidate_b": parse_cards(cand["B"]) if "B" in cand else [],
         "generator": prompt_out(gen_p) if gen_p else None,
         "evaluator": prompt_out(eval_p) if eval_p else None,
         "evaluation": (
@@ -156,7 +186,7 @@ async def create_session(
     await session.flush()
 
     try:
-        a, b, _raw = await llm.run_generator(
+        a_cards, b_cards, _raw = await llm.run_generator(
             template=gen.template,
             model=gen.model,
             max_tokens=gen.max_tokens,
@@ -165,12 +195,20 @@ async def create_session(
             audience=s.audience,
             coders_user=coders_id,
         )
-        if not a or not b:
+        if not a_cards or not b_cards:
             raise ValueError("generator returned empty candidate")
         session.add_all(
             [
-                Candidate(session_id=s.id, label="A", content=a),
-                Candidate(session_id=s.id, label="B", content=b),
+                Candidate(
+                    session_id=s.id,
+                    label="A",
+                    content=json.dumps(a_cards, ensure_ascii=False),
+                ),
+                Candidate(
+                    session_id=s.id,
+                    label="B",
+                    content=json.dumps(b_cards, ensure_ascii=False),
+                ),
             ]
         )
         s.status = "generated"
@@ -223,8 +261,8 @@ async def evaluate_session(
             max_tokens=ev_prompt.max_tokens,
             temperature=ev_prompt.temperature,
             spec=s.spec,
-            a=cand["A"],
-            b=cand["B"],
+            a=cards_to_text(parse_cards(cand["A"])),
+            b=cards_to_text(parse_cards(cand["B"])),
             coders_user=coders_id,
         )
     except Exception as e:  # noqa: BLE001
