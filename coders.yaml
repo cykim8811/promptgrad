@@ -43,7 +43,7 @@ services:
       # reads these from env; we forward X-Coders-User on every call.
       ANTHROPIC_BASE_URL: ${ai.url}
       ANTHROPIC_API_KEY: ${ai.token}
-      DEFAULT_MODEL: claude-sonnet-4-6
+      DEFAULT_MODEL: claude-haiku-4-5
       ALLOWED_MODELS: claude-opus-4-8,claude-sonnet-4-6,claude-haiku-4-5
 
   db:
@@ -53,4 +53,4 @@ services:
   ai:
     type: llm
     models: [claude-opus-4-8, claude-sonnet-4-6, claude-haiku-4-5]
-    default_model: claude-sonnet-4-6
+    default_model: claude-haiku-4-5

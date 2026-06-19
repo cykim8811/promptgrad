@@ -7,11 +7,13 @@ project is to evolve them.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models import Prompt
+
+SEED_NOTE = "초기 시드 프롬프트."
 
 GENERATOR_V1 = """\
 당신은 어떤 개념이든 사람이 가장 잘 이해하도록 설명하는 전문가입니다.
@@ -65,7 +67,7 @@ async def seed_prompts() -> None:
                         max_tokens=4000,
                         temperature=1.0,
                         is_active=True,
-                        notes="초기 시드 프롬프트.",
+                        notes=SEED_NOTE,
                     )
                 )
             if "evaluator" not in kinds:
@@ -79,6 +81,16 @@ async def seed_prompts() -> None:
                         max_tokens=2000,
                         temperature=0.3,
                         is_active=True,
-                        notes="초기 시드 프롬프트.",
+                        notes=SEED_NOTE,
                     )
                 )
+
+            # Keep the pristine seed prompts pointed at the current default
+            # model (lets us switch models via DEFAULT_MODEL without DB
+            # surgery). Only touches the auto-seeded rows — any version a
+            # user created via the UI has different notes and is left alone.
+            await session.execute(
+                update(Prompt)
+                .where(Prompt.notes == SEED_NOTE, Prompt.model != settings.default_model)
+                .values(model=settings.default_model)
+            )
