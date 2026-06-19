@@ -59,21 +59,21 @@ async def _complete_json(
     user: str,
     coders_user: UUID | None,
 ) -> tuple[dict, str]:
-    """Run a single turn, prefilled with '{' to force a JSON object."""
+    """Run a single turn and parse a JSON object from the reply.
+
+    We don't prefill an assistant '{' — newer Claude models reject
+    assistant-message prefill ("conversation must end with a user
+    message"). Instead we instruct JSON-only output and extract it.
+    """
     msg = await _get_client().messages.create(
         model=model,
         max_tokens=min(max_tokens, 16000),
         temperature=temperature,
         system=system,
-        messages=[
-            {"role": "user", "content": user},
-            {"role": "assistant", "content": "{"},
-        ],
+        messages=[{"role": "user", "content": user}],
         extra_headers=_extra_headers(coders_user),
     )
-    raw = "{" + "".join(
-        block.text for block in msg.content if block.type == "text"
-    )
+    raw = "".join(block.text for block in msg.content if block.type == "text")
     return _extract_json(raw), raw
 
 

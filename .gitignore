@@ -7,3 +7,5 @@ __pycache__
 .env.*
 !.env.example
 .DS_Store
+compose.local.yaml
+.pnpm-store/
