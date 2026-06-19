@@ -38,19 +38,13 @@ services:
     timeout: 300
     env:
       DATABASE_URL: postgresql+asyncpg://${db.user}:${db.password}@${db.host}:${db.port}/${db.name}
-      # Managed Claude (PLATFORM.md §8) — the platform injects its own key
-      # and bills tokens to the calling visitor's pool. The Anthropic SDK
-      # reads these from env; we forward X-Coders-User on every call.
-      ANTHROPIC_BASE_URL: ${ai.url}
-      ANTHROPIC_API_KEY: ${ai.token}
+      # Use our OWN Anthropic key (set out-of-band via set_env, secret) — NOT
+      # the managed proxy. No ANTHROPIC_BASE_URL → the SDK hits the real
+      # api.anthropic.com, so LLM cost bills the owner's Anthropic account
+      # directly instead of the coders.kr visitor pools.
       DEFAULT_MODEL: claude-haiku-4-5
       ALLOWED_MODELS: claude-opus-4-8,claude-sonnet-4-6,claude-haiku-4-5
 
   db:
     type: postgres
     size: 1Gi
-
-  ai:
-    type: llm
-    models: [claude-opus-4-8, claude-sonnet-4-6, claude-haiku-4-5]
-    default_model: claude-haiku-4-5
