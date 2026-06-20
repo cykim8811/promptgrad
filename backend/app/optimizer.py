@@ -120,11 +120,11 @@ async def _eval_example(prompt: str, ex: dict, cfg: dict) -> tuple[float, dict]:
     loss = w_choice * (1 - choice_match) + w_cov * (1 - coverage)
     record = {
         "session_id": ex["session_id"],
-        "spec": ex["spec"][:120],
+        "spec": ex["spec"][:240],
         "human_choice": ex["human_choice"],
-        "human_rationale": ex["human_rationale"][:300],
+        "human_rationale": ex["human_rationale"][:800],
         "eval_winner": winner,
-        "eval_reason": reason[:300],
+        "eval_reason": reason[:800],
         "choice_match": choice_match,
         "coverage": round(coverage, 2),
         "loss": round(loss, 3),

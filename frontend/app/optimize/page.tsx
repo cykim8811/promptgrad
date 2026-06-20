@@ -300,6 +300,12 @@ function RunDetail({
             val 없음 — greedy 채택(검증 신뢰도 낮음)
           </span>
         )}
+        <a
+          href={`/optimize/run?id=${run.id}`}
+          className="ml-auto inline-flex items-center gap-1 text-[12px] font-medium text-muted-foreground hover:text-foreground"
+        >
+          전체 관제 ↗
+        </a>
       </div>
 
       {run.error && (
