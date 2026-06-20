@@ -25,7 +25,7 @@ from app.routes.prompts import get_active_prompt, prompt_out
 
 router = APIRouter(prefix="/api", tags=["optimize"])
 
-LOSS_TYPES = ("rationale_recovery",)
+LOSS_BY_KIND = {"evaluator": "rationale_recovery", "generator": "understandability"}
 
 DEFAULT_CONFIG = {
     "n_iters": 3,
@@ -40,6 +40,8 @@ DEFAULT_CONFIG = {
     "judge_model": settings.default_model,
     "eval_max_tokens": 1200,
     "eval_temperature": 0.2,
+    "gen_max_tokens": 4000,
+    "gen_temperature": 1.0,
 }
 
 
@@ -128,10 +130,9 @@ async def start_optimize(
     background: BackgroundTasks,
     coders_id: UUID = Depends(require_identity),
 ) -> dict:
-    if body.target_kind != "evaluator":
-        raise HTTPException(400, "현재는 target_kind='evaluator'만 지원합니다.")
-    if body.loss_type not in LOSS_TYPES:
-        raise HTTPException(400, f"loss_type must be one of {LOSS_TYPES}")
+    if body.target_kind not in LOSS_BY_KIND:
+        raise HTTPException(400, "target_kind must be 'evaluator' or 'generator'.")
+    loss_type = LOSS_BY_KIND[body.target_kind]
 
     from app.routes.users import upsert_local_user
 
@@ -159,12 +160,20 @@ async def start_optimize(
                 if cfg[m] not in settings.allowed_model_list:
                     cfg[m] = settings.default_model
 
+            # Generator runs are judged by the trusted active Evaluator;
+            # pin it for reproducibility.
+            if body.target_kind == "generator":
+                judge = await get_active_prompt(session, "evaluator")
+                if judge is None:
+                    raise HTTPException(400, "판정용 활성 Evaluator가 없습니다.")
+                cfg["judge_eval_id"] = str(judge.id)
+
             user = await upsert_local_user(session, coders_id)
             run = OptimizationRun(
                 id=uuid4(),
                 target_kind=body.target_kind,
                 base_prompt_id=base.id,
-                loss_type=body.loss_type,
+                loss_type=loss_type,
                 config=cfg,
                 status="running",
                 created_by=user.id,

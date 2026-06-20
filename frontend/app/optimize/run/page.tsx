@@ -12,13 +12,19 @@ import { fetchRun, type OptRun, type OptStep } from "@/lib/api";
 type Rec = {
   session_id: string;
   spec: string;
-  human_choice: string;
-  human_rationale: string;
-  eval_winner: string;
-  eval_reason: string;
-  choice_match: number;
-  coverage: number;
+  human_rationale?: string;
   loss: number;
+  // evaluator loss
+  human_choice?: string;
+  eval_winner?: string;
+  eval_reason?: string;
+  choice_match?: number;
+  coverage?: number;
+  // generator loss
+  reference?: string;
+  new_best?: string;
+  judge_winner?: string;
+  judge_reason?: string;
 };
 
 export default function RunMonitorPage() {
@@ -222,6 +228,7 @@ function ExampleCard({
   wChoice: number;
   wCov: number;
 }) {
+  const isGen = r.reference !== undefined;
   return (
     <div className="rounded-lg border p-3.5">
       <div className="flex items-start justify-between gap-3">
@@ -234,59 +241,114 @@ function ExampleCard({
         </Link>
       </div>
 
-      <div className="mt-2.5 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-md bg-muted/40 p-2.5">
-          <div className="text-[11px] font-semibold text-foreground">
-            사람 → {r.human_choice}안
-          </div>
-          <p className="mt-1 whitespace-pre-wrap text-[12.5px] leading-relaxed text-muted-foreground">
-            {r.human_rationale || "(이유 없음)"}
-          </p>
-        </div>
-        <div
-          className={cn(
-            "rounded-md p-2.5",
-            r.choice_match ? "bg-emerald-500/5" : "bg-amber-500/5"
-          )}
-        >
-          <div className="text-[11px] font-semibold text-foreground">
-            Evaluator → {r.eval_winner}안{" "}
-            <span
+      {isGen ? (
+        <>
+          <div className="mt-2.5 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-md bg-muted/40 p-2.5">
+              <div className="text-[11px] font-semibold text-foreground">
+                참조 (사람 선호){" "}
+                {r.judge_winner === "reference" && (
+                  <span className="text-emerald-600 dark:text-emerald-400">★ 승</span>
+                )}
+              </div>
+              <p className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap text-[12.5px] leading-relaxed text-muted-foreground">
+                {r.reference || "—"}
+              </p>
+              {r.human_rationale && (
+                <p className="mt-1.5 text-[11.5px] text-muted-foreground">
+                  사람 이유: {r.human_rationale}
+                </p>
+              )}
+            </div>
+            <div
               className={cn(
-                r.choice_match
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-amber-600 dark:text-amber-400"
+                "rounded-md p-2.5",
+                r.judge_winner === "new" ? "bg-emerald-500/5" : "bg-muted/40"
               )}
             >
-              {r.choice_match ? "(일치)" : "(불일치)"}
+              <div className="text-[11px] font-semibold text-foreground">
+                새 생성{" "}
+                {r.judge_winner === "new" && (
+                  <span className="text-emerald-600 dark:text-emerald-400">★ 승</span>
+                )}
+              </div>
+              <p className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap text-[12.5px] leading-relaxed text-muted-foreground">
+                {r.new_best || "—"}
+              </p>
+            </div>
+          </div>
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-4 text-[12px] tabular-nums">
+            <span className="text-muted-foreground">
+              Evaluator 판정:{" "}
+              <b className="text-foreground">
+                {r.judge_winner === "new" ? "새 생성 승" : "참조 승"}
+              </b>
+            </span>
+            <span className="text-muted-foreground">
+              loss <b className="text-foreground">{r.loss}</b>
+            </span>
+            {r.judge_reason && (
+              <span className="basis-full text-[11.5px] text-muted-foreground">
+                판정 이유: {r.judge_reason}
+              </span>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="mt-2.5 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-md bg-muted/40 p-2.5">
+              <div className="text-[11px] font-semibold text-foreground">
+                사람 → {r.human_choice}안
+              </div>
+              <p className="mt-1 whitespace-pre-wrap text-[12.5px] leading-relaxed text-muted-foreground">
+                {r.human_rationale || "(이유 없음)"}
+              </p>
+            </div>
+            <div
+              className={cn(
+                "rounded-md p-2.5",
+                r.choice_match ? "bg-emerald-500/5" : "bg-amber-500/5"
+              )}
+            >
+              <div className="text-[11px] font-semibold text-foreground">
+                Evaluator → {r.eval_winner}안{" "}
+                <span
+                  className={cn(
+                    r.choice_match
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-amber-600 dark:text-amber-400"
+                  )}
+                >
+                  {r.choice_match ? "(일치)" : "(불일치)"}
+                </span>
+              </div>
+              <p className="mt-1 whitespace-pre-wrap text-[12.5px] leading-relaxed text-muted-foreground">
+                {r.eval_reason || "—"}
+              </p>
+            </div>
+          </div>
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] tabular-nums">
+            <span className="text-muted-foreground">
+              match <b className="text-foreground">{r.choice_match}</b>
+            </span>
+            <span className="flex items-center gap-1.5 text-muted-foreground">
+              coverage
+              <span className="inline-block h-1.5 w-16 overflow-hidden rounded-full bg-border align-middle">
+                <span
+                  className="block h-full bg-foreground"
+                  style={{ width: `${Math.round((r.coverage ?? 0) * 100)}%` }}
+                />
+              </span>
+              <b className="text-foreground">{r.coverage}</b>
+            </span>
+            <span className="text-muted-foreground">
+              = {wChoice}·(1−{r.choice_match}) + {wCov}·(1−{r.coverage}) ={" "}
+              <b className="text-foreground">{r.loss}</b>
             </span>
           </div>
-          <p className="mt-1 whitespace-pre-wrap text-[12.5px] leading-relaxed text-muted-foreground">
-            {r.eval_reason || "—"}
-          </p>
-        </div>
-      </div>
-
-      {/* loss breakdown */}
-      <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] tabular-nums">
-        <span className="text-muted-foreground">
-          match <b className="text-foreground">{r.choice_match}</b>
-        </span>
-        <span className="flex items-center gap-1.5 text-muted-foreground">
-          coverage
-          <span className="inline-block h-1.5 w-16 overflow-hidden rounded-full bg-border align-middle">
-            <span
-              className="block h-full bg-foreground"
-              style={{ width: `${Math.round(r.coverage * 100)}%` }}
-            />
-          </span>
-          <b className="text-foreground">{r.coverage}</b>
-        </span>
-        <span className="text-muted-foreground">
-          = {wChoice}·(1−{r.choice_match}) + {wCov}·(1−{r.coverage}) ={" "}
-          <b className="text-foreground">{r.loss}</b>
-        </span>
-      </div>
+        </>
+      )}
     </div>
   );
 }

@@ -63,14 +63,20 @@ async def _load_examples(split: str) -> list[dict]:
             rationale = "\n".join(
                 t for t in [sess.feedback.reason, sess.feedback.understanding] if t
             )
+            a_text = cards_to_text(parse_cards(cand["A"]))
+            b_text = cards_to_text(parse_cards(cand["B"]))
             out.append(
                 {
                     "session_id": str(sess.id),
                     "spec": sess.spec,
-                    "a_text": cards_to_text(parse_cards(cand["A"])),
-                    "b_text": cards_to_text(parse_cards(cand["B"])),
+                    "audience": sess.audience,
+                    "a_text": a_text,
+                    "b_text": b_text,
                     "human_choice": sess.feedback.choice,
                     "human_rationale": rationale,
+                    # The human-preferred explanation — the reference the new
+                    # Generator must beat (judged by the trusted Evaluator).
+                    "reference": a_text if sess.feedback.choice == "A" else b_text,
                 }
             )
         return out
@@ -132,12 +138,109 @@ async def _eval_example(prompt: str, ex: dict, cfg: dict) -> tuple[float, dict]:
     return loss, record
 
 
-async def _set_loss(prompt: str, exs: list[dict], cfg: dict) -> tuple[float, list[dict]]:
+# ---- loss: understandability (Generator node, Evaluator-as-reward) ---------
+
+
+async def _eval_example_generator(
+    gen_prompt: str, ex: dict, cfg: dict, judge: dict
+) -> tuple[float, dict]:
+    """Run the new Generator, then let the trusted Evaluator compare its best
+    output against the human-preferred reference. loss = 1 if the reference
+    still wins (new failed to beat it), else 0."""
+    a_cards, b_cards, _raw = await llm.run_generator(
+        template=gen_prompt,
+        model=cfg["model"],
+        max_tokens=cfg.get("gen_max_tokens", 4000),
+        temperature=cfg.get("gen_temperature", 1.0),
+        spec=ex["spec"],
+        audience=ex["audience"],
+        coders_user=None,
+    )
+    new_a, new_b = cards_to_text(a_cards), cards_to_text(b_cards)
+    if not new_a or not new_b:
+        new_best = new_a or new_b
+    else:
+        pick = await llm.run_evaluator(
+            template=judge["template"], model=judge["model"], max_tokens=1200,
+            temperature=0.2, spec=ex["spec"], a=new_a, b=new_b, coders_user=None,
+        )
+        new_best = new_a if pick["winner"] == "A" else new_b
+
+    # Randomize order per example (deterministic) to blunt position bias.
+    flip = (
+        int(hashlib.sha256((ex["session_id"] + "gen").encode()).hexdigest(), 16) % 2
+        == 0
+    )
+    a_side, b_side = (new_best, ex["reference"]) if flip else (ex["reference"], new_best)
+    new_label = "A" if flip else "B"
+    cmp = await llm.run_evaluator(
+        template=judge["template"], model=judge["model"], max_tokens=1200,
+        temperature=0.2, spec=ex["spec"], a=a_side, b=b_side, coders_user=None,
+    )
+    new_wins = cmp["winner"] == new_label
+    loss = 0.0 if new_wins else 1.0
+    record = {
+        "session_id": ex["session_id"],
+        "spec": ex["spec"][:240],
+        "human_rationale": ex["human_rationale"][:800],
+        "reference": ex["reference"][:800],
+        "new_best": new_best[:800],
+        "judge_winner": "new" if new_wins else "reference",
+        "judge_reason": cmp["reason"][:800],
+        "loss": loss,
+    }
+    return loss, record
+
+
+async def _textual_gradient_generator(
+    gen_prompt: str, records: list[dict], cfg: dict
+) -> str:
+    losers = [r for r in records if r["loss"] > 0]
+    sample = losers or records
+    evidence = "\n".join(
+        f"- 명세 '{r['spec'][:40]}…': 사람이 선호한 참조 설명이 새 생성보다 나음. "
+        f"사람 이유: {r['human_rationale'][:160]} / Evaluator 판정 이유: {r['judge_reason'][:160]}"
+        for r in sample
+    )
+    system = (
+        "너는 어떤 Generator 프롬프트에 대한 'gradient'를 계산한다.\n"
+        "loss = 새 생성이 '사람이 선호한 참조 설명'을 (신뢰된 Evaluator 기준) 이기지 못함.\n"
+        "gradient는 다음만 담아라: (a) 참조 설명이 *왜* 더 이해되는지(사람 이유 + Evaluator "
+        "판정 근거)를 토대로, 새 생성에 부족한 점을 특정, (b) 그것을 만들어내려면 Generator "
+        "프롬프트가 무엇을 추가로 지시해야 하는지 '방향'. 특정 명세의 답을 외우게 하지 말고 "
+        "일반적 생성 전략으로. 새 프롬프트를 쓰지 말고 비평(gradient)만."
+    )
+    user = (
+        f"현재 Generator 프롬프트:\n\"\"\"\n{gen_prompt}\n\"\"\"\n\n"
+        f"관측(새 생성이 진 사례):\n{evidence}\n\n이 프롬프트의 gradient를 적어라."
+    )
+    return await llm.complete_text(
+        system=system, user=user, model=cfg["judge_model"], temperature=0.2,
+        max_tokens=700,
+    )
+
+
+# ---- dispatch over the minibatch -------------------------------------------
+
+
+async def _set_loss(
+    prompt: str, exs: list[dict], cfg: dict, kind: str, judge: dict | None
+) -> tuple[float, list[dict]]:
     if not exs:
         return 0.0, []
-    results = await asyncio.gather(*[_eval_example(prompt, e, cfg) for e in exs])
+    if kind == "generator":
+        tasks = [_eval_example_generator(prompt, e, cfg, judge) for e in exs]
+    else:
+        tasks = [_eval_example(prompt, e, cfg) for e in exs]
+    results = await asyncio.gather(*tasks)
     mean = sum(r[0] for r in results) / len(results)
     return mean, [r[1] for r in results]
+
+
+async def _gradient(prompt: str, records: list[dict], cfg: dict, kind: str) -> str:
+    if kind == "generator":
+        return await _textual_gradient_generator(prompt, records, cfg)
+    return await _textual_gradient(prompt, records, cfg)
 
 
 # ---- gradient + step -------------------------------------------------------
@@ -171,9 +274,9 @@ async def _textual_gradient(prompt: str, records: list[dict], cfg: dict) -> str:
 async def _step(prompt: str, grad: str, cfg: dict) -> str:
     cap = cfg.get("length_cap", 600)
     system = (
-        "너는 textual gradient descent 옵티마이저다. 현재 Evaluator 프롬프트에 "
+        "너는 textual gradient descent 옵티마이저다. 현재 프롬프트에 "
         "gradient(비평)를 반영해 개선된 프롬프트를 출력하라.\n"
-        f"제약: (1) 최소 편집 — gradient가 지적한 부분만. (2) 길이 정칙화 — {cap}자 이내로 "
+        f"제약: (1) 최소 편집 — gradient가 지적한 부분만. (2) {cap}자 이내로 "
         "짧고 일반적으로 유지(특정 사례에 종속 금지). 출력은 개선된 프롬프트 텍스트만."
     )
     user = (
@@ -194,11 +297,13 @@ async def run_optimization(run_id: UUID) -> None:
     train = await _load_examples("train")
     val = await _load_examples("val")
 
+    judge: dict | None = None
     async with AsyncSessionLocal() as s:
         async with s.begin():
             run = await s.get(OptimizationRun, run_id)
             base = await s.get(Prompt, run.base_prompt_id)
             cfg = dict(run.config)
+            kind = run.target_kind
             base_text = base.template
             run.train_count = len(train)
             run.val_count = len(val)
@@ -206,9 +311,29 @@ async def run_optimization(run_id: UUID) -> None:
                 run.status = "error"
                 run.error = "라벨된 학습 데이터가 없습니다 (세션에 피드백을 먼저 남기세요)."
                 return
+            if kind == "generator":
+                # The trusted Evaluator that judges new generations vs the
+                # human-preferred reference (pinned for reproducibility).
+                je_id = cfg.get("judge_eval_id")
+                je = await s.get(Prompt, UUID(je_id)) if je_id else None
+                if je is None:
+                    je = (
+                        await s.execute(
+                            select(Prompt).where(
+                                Prompt.kind == "evaluator", Prompt.is_active.is_(True)
+                            )
+                        )
+                    ).scalar_one_or_none()
+                if je is None:
+                    run.status = "error"
+                    run.error = "판정용 활성 Evaluator가 없습니다."
+                    return
+                judge = {"template": je.template, "model": je.model}
 
     try:
-        base_val = (await _set_loss(base_text, val, cfg))[0] if val else None
+        base_val = (
+            (await _set_loss(base_text, val, cfg, kind, judge))[0] if val else None
+        )
         async with AsyncSessionLocal() as s:
             async with s.begin():
                 run = await s.get(OptimizationRun, run_id)
@@ -224,13 +349,17 @@ async def run_optimization(run_id: UUID) -> None:
         for i in range(n_iters):
             rng = random.Random(f"{run_id}:{i}")
             batch = train if len(train) <= batch_size else rng.sample(train, batch_size)
-            train_loss, records = await _set_loss(prompt, batch, cfg)
+            train_loss, records = await _set_loss(prompt, batch, cfg, kind, judge)
 
             grad, candidate, val_score, accepted = "", "", None, False
             if train_loss > stop:
-                grad = await _textual_gradient(prompt, records, cfg)
+                grad = await _gradient(prompt, records, cfg, kind)
                 candidate = await _step(prompt, grad, cfg)
-                val_score = (await _set_loss(candidate, val, cfg))[0] if val else None
+                val_score = (
+                    (await _set_loss(candidate, val, cfg, kind, judge))[0]
+                    if val
+                    else None
+                )
                 accepted = (
                     (val_score is not None and val_score < best_val)
                     or (val_score is None)

@@ -129,7 +129,8 @@ function DatasetBar({ stats }: { stats: DatasetStats | null }) {
 }
 
 function NewRun({ onStarted }: { onStarted: (r: OptRun) => void }) {
-  const [prompts, setPrompts] = useState<Prompt[]>([]);
+  const [target, setTarget] = useState<"evaluator" | "generator">("evaluator");
+  const [prompts, setPrompts] = useState<Record<string, Prompt[]> | null>(null);
   const [baseId, setBaseId] = useState("");
   const [nIters, setNIters] = useState(3);
   const [batch, setBatch] = useState(4);
@@ -137,9 +138,7 @@ function NewRun({ onStarted }: { onStarted: (r: OptRun) => void }) {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchPrompts()
-      .then((p) => setPrompts(p.evaluator ?? []))
-      .catch(() => {});
+    fetchPrompts().then(setPrompts).catch(() => {});
   }, []);
 
   async function run() {
@@ -148,8 +147,7 @@ function NewRun({ onStarted }: { onStarted: (r: OptRun) => void }) {
     setErr(null);
     try {
       const r = await startOptimize({
-        target_kind: "evaluator",
-        loss_type: "rationale_recovery",
+        target_kind: target,
         base_prompt_id: baseId || undefined,
         config: { n_iters: nIters, batch_size: batch },
       });
@@ -163,7 +161,34 @@ function NewRun({ onStarted }: { onStarted: (r: OptRun) => void }) {
 
   return (
     <div className="space-y-4 rounded-xl border p-5">
-      <h2 className="text-[14px] font-medium">새 학습 실행 — Evaluator</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-[14px] font-medium">새 학습 실행</h2>
+        <div className="inline-flex rounded-lg border p-0.5">
+          {(["evaluator", "generator"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => {
+                setTarget(t);
+                setBaseId("");
+              }}
+              className={cn(
+                "rounded-md px-3 py-1 text-[12px] font-medium capitalize transition-colors",
+                target === t
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      </div>
+      {target === "generator" && (
+        <p className="text-[12px] leading-relaxed text-muted-foreground">
+          새 Generator의 생성물을 <b className="text-foreground">활성 Evaluator</b>가
+          판정해, 사람이 선호했던 설명(참조)을 이기는지로 학습합니다.
+        </p>
+      )}
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="base 버전">
           <select
@@ -172,7 +197,7 @@ function NewRun({ onStarted }: { onStarted: (r: OptRun) => void }) {
             className="block w-full rounded-md border bg-background px-3 py-2 text-[13px] focus:border-foreground/40 focus:outline-none"
           >
             <option value="">활성 버전 (기본)</option>
-            {prompts.map((p) => (
+            {(prompts?.[target] ?? []).map((p) => (
               <option key={p.id} value={p.id}>
                 v{p.version} · {p.name}
                 {p.is_active ? " · 활성" : ""}
@@ -182,7 +207,11 @@ function NewRun({ onStarted }: { onStarted: (r: OptRun) => void }) {
         </Field>
         <Field label="loss">
           <input
-            value="rationale_recovery (이유 회복도, w_cov 0.6)"
+            value={
+              target === "evaluator"
+                ? "rationale_recovery (이유 회복도)"
+                : "understandability (참조 대비 승리)"
+            }
             disabled
             className="block w-full rounded-md border bg-muted/40 px-3 py-2 text-[13px] text-muted-foreground"
           />
