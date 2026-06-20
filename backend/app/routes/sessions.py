@@ -326,6 +326,11 @@ async def submit_feedback(
             )
         )
     s.status = "done"
+    if s.split == "none":
+        # Deterministic train/val assignment for the optimizer dataset.
+        from app.optimizer import assign_split
+
+        s.split = assign_split(s.id)
     await session.flush()
     s = await _get_full_session(session, s.id)
     prompts = await _load_prompts(

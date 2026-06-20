@@ -6,6 +6,7 @@ from sqlalchemy import text
 
 from app.core.database import AsyncSessionLocal
 from app.core.seed import seed_prompts
+from app.routes.optimize import router as optimize_router
 from app.routes.prompts import router as prompts_router
 from app.routes.sessions import router as sessions_router
 from app.routes.users import router as users_router
@@ -34,6 +35,7 @@ app = FastAPI(
 app.include_router(users_router)
 app.include_router(prompts_router)
 app.include_router(sessions_router)
+app.include_router(optimize_router)
 
 
 @app.get("/api/health")

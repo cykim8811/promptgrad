@@ -10,6 +10,7 @@ import { SignInLink, SignOutLink } from "./SignIn";
 const NAV = [
   { href: "/", label: "세션" },
   { href: "/prompts", label: "모델" },
+  { href: "/optimize", label: "학습" },
 ];
 
 export function Header() {

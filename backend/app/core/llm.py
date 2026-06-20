@@ -77,6 +77,50 @@ async def _complete_json(
     return _extract_json(raw), raw
 
 
+async def complete_text(
+    *,
+    system: str,
+    user: str,
+    model: str,
+    max_tokens: int = 700,
+    temperature: float = 0.3,
+    coders_user: UUID | None = None,
+) -> str:
+    """Single-turn text completion (for gradient / step / judge calls)."""
+    msg = await _get_client().messages.create(
+        model=model,
+        max_tokens=min(max_tokens, 16000),
+        temperature=temperature,
+        system=system,
+        messages=[{"role": "user", "content": user}],
+        extra_headers=_extra_headers(coders_user),
+    )
+    return "".join(
+        b.text for b in msg.content if b.type == "text"
+    ).strip()
+
+
+async def complete_json(
+    *,
+    system: str,
+    user: str,
+    model: str,
+    max_tokens: int = 500,
+    temperature: float = 0.0,
+    coders_user: UUID | None = None,
+) -> dict:
+    """Single-turn JSON completion (for the rationale-coverage judge)."""
+    data, _raw = await _complete_json(
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        system=system,
+        user=user,
+        coders_user=coders_user,
+    )
+    return data
+
+
 async def run_generator(
     *,
     template: str,
