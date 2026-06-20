@@ -19,10 +19,9 @@ GENERATOR_V1 = """\
 당신은 어떤 개념이든 사람이 가장 잘 이해하도록 설명하는 전문가입니다.
 
 주어진 '명세'(이해시키고자 하는 대상 지식)와 '대상 독자'를 바탕으로,
-서로 접근 방식이 뚜렷하게 다른 두 가지 설명안 A와 B를 작성하세요.
+가장 이해가 잘 되는 설명을 작성하세요.
 
 원칙:
-- 두 안은 전략이 달라야 합니다. (예: 한쪽은 비유/직관 중심, 다른 한쪽은 구조/원리 중심)
 - 대상 독자의 사전 지식 수준에 맞추세요.
 - 명세가 작성된 언어와 같은 언어로 설명하세요.
 - 군더더기 없이, 핵심을 이해시키는 데 집중하세요.
@@ -114,12 +113,19 @@ async def seed_prompts() -> None:
                     )
                 )
 
-            # Keep the pristine seed prompts pointed at the current default
-            # model (lets us switch models via DEFAULT_MODEL without DB
-            # surgery). Only touches the auto-seeded rows — any version a
-            # user created via the UI has different notes and is left alone.
-            await session.execute(
-                update(Prompt)
-                .where(Prompt.notes == SEED_NOTE, Prompt.model != settings.default_model)
-                .values(model=settings.default_model)
-            )
+            # Keep the pristine seed prompts in sync with the code (model +
+            # template) so behaviour changes roll out without DB surgery.
+            # Only touches the auto-seeded rows (notes == SEED_NOTE); any
+            # version a user created via the UI has different notes and is
+            # left alone (the UI only creates new versions, never edits v1).
+            seed_templates = {
+                "generator": GENERATOR_V1,
+                "evaluator": EVALUATOR_V1,
+                "optimizer": OPTIMIZER_V1,
+            }
+            for k, tmpl in seed_templates.items():
+                await session.execute(
+                    update(Prompt)
+                    .where(Prompt.notes == SEED_NOTE, Prompt.kind == k)
+                    .values(model=settings.default_model, template=tmpl)
+                )

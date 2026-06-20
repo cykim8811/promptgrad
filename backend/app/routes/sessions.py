@@ -10,6 +10,7 @@ GET  /api/stats               dataset-level stats (evaluator↔human agreement)
 
 from __future__ import annotations
 
+import asyncio
 import json
 from uuid import UUID
 
@@ -187,15 +188,21 @@ async def create_session(
     await session.flush()
 
     try:
-        a_cards, b_cards, _raw = await llm.run_generator(
-            template=gen.template,
-            model=gen.model,
-            max_tokens=gen.max_tokens,
-            temperature=gen.temperature,
-            spec=s.spec,
-            audience=s.audience,
-            coders_user=coders_id,
-        )
+        # The Generator doesn't know about A/B — sample the SAME prompt twice,
+        # independently, and use the two samples as A and B.
+        async def _gen():
+            cards, _raw = await llm.run_generator(
+                template=gen.template,
+                model=gen.model,
+                max_tokens=gen.max_tokens,
+                temperature=gen.temperature,
+                spec=s.spec,
+                audience=s.audience,
+                coders_user=coders_id,
+            )
+            return cards
+
+        a_cards, b_cards = await asyncio.gather(_gen(), _gen())
         if not a_cards or not b_cards:
             raise ValueError("generator returned empty candidate")
         session.add_all(

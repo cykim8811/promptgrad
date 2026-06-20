@@ -89,13 +89,13 @@ async def _forward(kind: str, node_prompt: str, ex: dict, cfg: dict) -> str:
             spec=ex["spec"], a=ex["a_text"], b=ex["b_text"], coders_user=None,
         )
         return f"선택: {r['winner']}안\n이유: {r['reason']}"
-    a_cards, b_cards, _raw = await llm.run_generator(
+    cards, _raw = await llm.run_generator(
         template=node_prompt, model=cfg["model"],
         max_tokens=cfg.get("gen_max_tokens", 4000),
         temperature=cfg.get("gen_temperature", 1.0),
         spec=ex["spec"], audience=ex["audience"], coders_user=None,
     )
-    return f"[설명안 A]\n{cards_to_text(a_cards)}\n\n[설명안 B]\n{cards_to_text(b_cards)}"
+    return cards_to_text(cards)
 
 
 def _ideal_text(kind: str, ex: dict) -> str:

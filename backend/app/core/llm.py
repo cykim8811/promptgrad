@@ -130,20 +130,21 @@ async def run_generator(
     spec: str,
     audience: str,
     coders_user: UUID | None,
-) -> tuple[list[dict], list[dict], str]:
-    """Return (cards_a, cards_b, raw_json).
+) -> tuple[list[dict], str]:
+    """Return (cards, raw_json) for ONE explanation.
 
-    Each candidate is an ordered list of step "cards": {title, body}.
+    The Generator is unaware of any A/B comparison — it just produces the
+    single best explanation. Callers that need an A/B pair sample it twice.
+    The explanation is an ordered list of step "cards": {title, body}.
     """
     system = template.format(spec=spec, audience=audience or "(특별히 지정되지 않음)")
     user = (
-        "위 지시에 따라 두 가지 설명안을 작성하세요.\n"
-        "각 설명안은 하나의 개념을 여러 단계로 나누어 설명하는 '카드'의 배열입니다. "
-        "각 카드는 짧은 제목(title)과 본문(body, 마크다운 허용)을 가집니다. "
-        "카드는 한 단계씩 자연스럽게 이어지도록 3~6개 정도가 적당합니다.\n"
+        "위 지시를 참고하되, 설명은 하나만 작성하세요. (A/B 같은 복수 안을 만들지 마세요.)\n"
+        "하나의 개념을 여러 단계로 나누어 설명하는 '카드'의 배열입니다. 각 카드는 짧은 "
+        "제목(title)과 본문(body, 마크다운 허용)을 가지며, 한 단계씩 자연스럽게 이어지도록 "
+        "3~6개 정도가 적당합니다.\n"
         "반드시 다음 형식의 JSON 객체로만 응답하세요. 다른 텍스트는 출력하지 마세요:\n"
-        '{"a": [{"title": "단계 제목", "body": "단계 본문"}, ...], '
-        '"b": [{"title": "단계 제목", "body": "단계 본문"}, ...]}'
+        '{"cards": [{"title": "단계 제목", "body": "단계 본문"}, ...]}'
     )
     data, raw = await _complete_json(
         model=model,
@@ -153,7 +154,7 @@ async def run_generator(
         user=user,
         coders_user=coders_user,
     )
-    return _coerce_cards(data.get("a")), _coerce_cards(data.get("b")), raw
+    return _coerce_cards(data.get("cards")), raw
 
 
 def _coerce_cards(value) -> list[dict]:
