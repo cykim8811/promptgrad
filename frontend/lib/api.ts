@@ -9,7 +9,7 @@ import { tracked } from "./warming";
 
 export type Prompt = {
   id: string;
-  kind: "generator" | "evaluator";
+  kind: "generator" | "evaluator" | "optimizer";
   version: number;
   name: string;
   template: string;
@@ -77,38 +77,33 @@ export type Stats = {
   agreement_rate: number | null;
 };
 
-export type OptStep = {
-  idx: number;
-  train_loss: number;
-  val_score: number | null;
-  gradient_text: string;
-  candidate_prompt: string;
-  accepted: boolean;
-  records: Array<Record<string, unknown>>;
+export type OptItem = {
+  session_id: string | null;
+  spec: string;
+  forward_output: string;
+  loss_text: string;
+  backward_text: string;
 };
 
 export type OptRun = {
   id: string;
   target_kind: string;
   base_prompt_id: string;
-  loss_type: string;
-  config: Record<string, number | string>;
+  optimizer_prompt_id: string | null;
   status: string;
   error: string;
-  train_count: number;
-  val_count: number;
-  base_val_score: number | null;
-  best_step_idx: number | null;
+  example_count: number;
+  aggregated_gap: string;
+  candidate_prompt: string;
   produced_prompt_id: string | null;
   created_at: string | null;
-  steps?: OptStep[];
+  items?: OptItem[];
   base_prompt?: Prompt | null;
 };
 
 export type DatasetStats = {
   labeled: number;
-  train: number;
-  val: number;
+  with_reason: number;
   disagreements: number;
 };
 
@@ -146,7 +141,7 @@ export async function fetchModels(): Promise<{ models: string[]; default: string
 }
 
 export async function createPrompt(input: {
-  kind: "generator" | "evaluator";
+  kind: "generator" | "evaluator" | "optimizer";
   name: string;
   template: string;
   model?: string;
@@ -228,8 +223,6 @@ export async function fetchDatasetStats(): Promise<DatasetStats> {
 export async function startOptimize(input: {
   target_kind?: string;
   base_prompt_id?: string;
-  loss_type?: string;
-  config?: Record<string, number | string>;
 }): Promise<OptRun> {
   return tracked(async () =>
     jsonOrThrow(await fetch("/api/optimize", POST(input)))

@@ -20,7 +20,7 @@ from app.models import Prompt
 
 router = APIRouter(prefix="/api/prompts", tags=["prompts"])
 
-KINDS = ("generator", "evaluator")
+KINDS = ("generator", "evaluator", "optimizer")
 
 
 def prompt_out(p: Prompt) -> dict:

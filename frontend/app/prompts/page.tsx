@@ -16,11 +16,13 @@ import {
   type Prompt,
 } from "@/lib/api";
 
-type Kind = "generator" | "evaluator";
+type Kind = "generator" | "evaluator" | "optimizer";
 
 const KIND_DESC: Record<Kind, string> = {
   generator: "명세를 받아 두 가지 설명안(A/B)을 생성합니다. {spec}, {audience} 사용 가능.",
   evaluator: "두 설명을 비교해 더 나은 쪽을 고릅니다. {spec}, {a}, {b} 사용 가능.",
+  optimizer:
+    "현재 프롬프트 + 격차 서술(진단)을 받아 개선된 프롬프트를 추론해 출력하는 노드. 학습에서 후보 프롬프트를 만드는 주체입니다.",
 };
 
 export default function PromptsPage() {
@@ -59,7 +61,7 @@ export default function PromptsPage() {
 
       <div className="flex items-center justify-between gap-3">
         <div className="inline-flex rounded-lg border p-0.5">
-          {(["generator", "evaluator"] as const).map((k) => (
+          {(["generator", "evaluator", "optimizer"] as const).map((k) => (
             <button
               key={k}
               onClick={() => {

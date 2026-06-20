@@ -49,6 +49,21 @@ EVALUATOR_V1 = """\
 화려함이나 분량이 아니라 '실제로 이해가 되는가'로 판단하세요.
 """
 
+OPTIMIZER_V1 = """\
+당신은 프롬프트를 개선하는 옵티마이저입니다.
+
+입력으로 (1) 어떤 노드의 '현재 프롬프트'와 (2) 그 노드가 받은 '격차 서술'
+— 이상과 현재의 차이, 그리고 그것이 나온 원인을 선언적으로 기술한 것 —
+을 받습니다.
+
+당신의 일은 이 격차를 줄이도록 현재 프롬프트를 다시 쓰는 것입니다.
+- 격차 서술은 명령이 아니라 '진단'입니다. 거기서 무엇을 바꿀지는 당신이 추론하세요.
+- 최소 편집: 격차와 무관한 부분은 건드리지 마세요.
+- 특정 사례의 정답을 외우게 하지 말고, 일반적으로 통하는 방향으로.
+
+출력은 개선된 프롬프트 텍스트만. 다른 설명은 붙이지 마세요.
+"""
+
 
 async def seed_prompts() -> None:
     async with AsyncSessionLocal() as session:
@@ -77,6 +92,20 @@ async def seed_prompts() -> None:
                         version=1,
                         name="기본 Evaluator v1",
                         template=EVALUATOR_V1,
+                        model=settings.default_model,
+                        max_tokens=2000,
+                        temperature=0.3,
+                        is_active=True,
+                        notes=SEED_NOTE,
+                    )
+                )
+            if "optimizer" not in kinds:
+                session.add(
+                    Prompt(
+                        kind="optimizer",
+                        version=1,
+                        name="기본 Optimizer v1",
+                        template=OPTIMIZER_V1,
                         model=settings.default_model,
                         max_tokens=2000,
                         temperature=0.3,

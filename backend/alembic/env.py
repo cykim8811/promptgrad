@@ -10,6 +10,7 @@ from app.models import (  # noqa: F401  register tables with metadata
     Candidate,
     Evaluation,
     Feedback,
+    OptimizationItem,
     OptimizationRun,
     OptimizationStep,
     Prompt,

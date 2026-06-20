@@ -18,7 +18,6 @@ import {
   startOptimize,
   type DatasetStats,
   type OptRun,
-  type OptStep,
   type Prompt,
 } from "@/lib/api";
 
@@ -41,9 +40,11 @@ export default function OptimizePage() {
       <header className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">학습 (Optimizer)</h1>
         <p className="max-w-2xl text-[14px] leading-relaxed text-muted-foreground">
-          라벨된 세션을 데이터로, Evaluator 프롬프트를 <b className="text-foreground">사람의
-          이유</b>에 정렬시킵니다. forward → 의미적 loss → 자연어 gradient →
-          step을 반복하고, held-out 검증을 통과한 후보만 새 버전으로 승격합니다.
+          한 번의 실행 = <b className="text-foreground">forward → 격차 서술(loss) →
+          원인 분석(backward) → 통합 → optimizer가 새 프롬프트 제안</b>. loss는
+          수치가 아니라 <b className="text-foreground">이상(=당신의 피드백)과 현재의
+          차이를 풀어 쓴 서술</b>이고, 자동 채점·게이트는 없습니다 — 당신이 격차와
+          후보를 읽고 승격을 판단합니다.
         </p>
       </header>
 
@@ -65,7 +66,7 @@ export default function OptimizePage() {
 
       <section className="space-y-3">
         <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-          실행 기록
+          실행 기록 (노드가 받아온 격차들)
         </h2>
         {runs === null && <Skeleton className="h-16 w-full" />}
         {runs && runs.length === 0 && (
@@ -84,9 +85,9 @@ export default function OptimizePage() {
                 )}
               >
                 <span className="text-[13px]">
-                  {r.target_kind} · {r.loss_type}
+                  <span className="font-medium capitalize">{r.target_kind}</span>
                   <span className="text-muted-foreground">
-                    {" "}· train {r.train_count}/val {r.val_count}
+                    {" "}· 예시 {r.example_count}
                     {r.created_at
                       ? ` · ${new Date(r.created_at).toLocaleString()}`
                       : ""}
@@ -95,11 +96,7 @@ export default function OptimizePage() {
                 <RunStatus status={r.status} />
               </button>
               {selected === r.id && (
-                <RunDetail
-                  runId={r.id}
-                  canEdit={!!me}
-                  onChanged={reloadRuns}
-                />
+                <RunDetail runId={r.id} canEdit={!!me} onChanged={reloadRuns} />
               )}
             </li>
           ))}
@@ -112,12 +109,11 @@ export default function OptimizePage() {
 function DatasetBar({ stats }: { stats: DatasetStats | null }) {
   const items = [
     ["라벨", stats?.labeled],
-    ["train", stats?.train],
-    ["val (held-out)", stats?.val],
-    ["불일치", stats?.disagreements],
+    ["이유 작성됨", stats?.with_reason],
+    ["Evaluator 불일치", stats?.disagreements],
   ] as const;
   return (
-    <div className="grid grid-cols-4 gap-2">
+    <div className="grid grid-cols-3 gap-2">
       {items.map(([l, v]) => (
         <div key={l} className="rounded-lg border bg-card px-3 py-2.5 text-center">
           <div className="text-xl font-semibold tabular-nums">{v ?? "—"}</div>
@@ -132,8 +128,6 @@ function NewRun({ onStarted }: { onStarted: (r: OptRun) => void }) {
   const [target, setTarget] = useState<"evaluator" | "generator">("evaluator");
   const [prompts, setPrompts] = useState<Record<string, Prompt[]> | null>(null);
   const [baseId, setBaseId] = useState("");
-  const [nIters, setNIters] = useState(3);
-  const [batch, setBatch] = useState(4);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -149,7 +143,6 @@ function NewRun({ onStarted }: { onStarted: (r: OptRun) => void }) {
       const r = await startOptimize({
         target_kind: target,
         base_prompt_id: baseId || undefined,
-        config: { n_iters: nIters, batch_size: batch },
       });
       onStarted(r);
     } catch (e) {
@@ -183,14 +176,14 @@ function NewRun({ onStarted }: { onStarted: (r: OptRun) => void }) {
           ))}
         </div>
       </div>
-      {target === "generator" && (
-        <p className="text-[12px] leading-relaxed text-muted-foreground">
-          새 Generator의 생성물을 <b className="text-foreground">활성 Evaluator</b>가
-          판정해, 사람이 선호했던 설명(참조)을 이기는지로 학습합니다.
-        </p>
-      )}
+      <p className="text-[12px] leading-relaxed text-muted-foreground">
+        {target === "evaluator"
+          ? "이상 = 사람의 선택 + 이유. 평가자 출력이 그것과 어떻게 다른지를 서술합니다."
+          : "이상 = 사람이 더 잘 이해한 설명(참조) + 이유. 새 생성이 그것과 어떻게 다른지를 서술합니다."}
+        {" "}활성 Optimizer 노드가 격차를 새 프롬프트로 추론합니다.
+      </p>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="base 버전">
+        <Field label={`base ${target} 버전`}>
           <select
             value={baseId}
             onChange={(e) => setBaseId(e.target.value)}
@@ -205,36 +198,19 @@ function NewRun({ onStarted }: { onStarted: (r: OptRun) => void }) {
             ))}
           </select>
         </Field>
-        <Field label="loss">
-          <input
-            value={
-              target === "evaluator"
-                ? "rationale_recovery (이유 회복도)"
-                : "understandability (참조 대비 승리)"
-            }
+        <Field label="Optimizer 노드">
+          <select
             disabled
+            value=""
             className="block w-full rounded-md border bg-muted/40 px-3 py-2 text-[13px] text-muted-foreground"
-          />
-        </Field>
-        <Field label="반복(n_iters)">
-          <input
-            type="number"
-            min={1}
-            max={8}
-            value={nIters}
-            onChange={(e) => setNIters(Number(e.target.value))}
-            className="block w-full rounded-md border bg-transparent px-3 py-2 text-[13px] tabular-nums focus:border-foreground/40 focus:outline-none"
-          />
-        </Field>
-        <Field label="배치 크기">
-          <input
-            type="number"
-            min={1}
-            max={16}
-            value={batch}
-            onChange={(e) => setBatch(Number(e.target.value))}
-            className="block w-full rounded-md border bg-transparent px-3 py-2 text-[13px] tabular-nums focus:border-foreground/40 focus:outline-none"
-          />
+          >
+            <option value="">
+              활성 Optimizer{" "}
+              {prompts?.optimizer?.find((p) => p.is_active)
+                ? `(v${prompts.optimizer.find((p) => p.is_active)!.version})`
+                : ""}
+            </option>
+          </select>
         </Field>
       </div>
       <div className="flex items-center justify-between gap-3 border-t pt-4">
@@ -242,7 +218,7 @@ function NewRun({ onStarted }: { onStarted: (r: OptRun) => void }) {
           {err ? (
             <span className="text-destructive">{err}</span>
           ) : (
-            "실행은 백그라운드에서 돕니다. 아래에서 진행 상황을 폴링합니다."
+            "백그라운드 실행. 진행은 아래에서 폴링합니다. (Generator는 느립니다)"
           )}
         </span>
         <Button onClick={run} disabled={busy}>
@@ -293,8 +269,6 @@ function RunDetail({
       </div>
     );
 
-  const steps = run.steps ?? [];
-
   async function act(fn: () => Promise<unknown>) {
     setBusy(true);
     try {
@@ -309,26 +283,14 @@ function RunDetail({
 
   return (
     <div className="mt-2 mb-3 space-y-4 rounded-xl border p-5">
-      {/* status line */}
       <div className="flex flex-wrap items-center gap-3 text-[13px]">
         <RunStatus status={run.status} />
         {run.status === "running" && (
           <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-            <Loader2 className="size-3.5 animate-spin" /> 실행 중… (스텝 {steps.length})
+            <Loader2 className="size-3.5 animate-spin" /> 실행 중…
           </span>
         )}
-        {run.base_val_score !== null && (
-          <span className="text-muted-foreground">
-            base val <b className="text-foreground tabular-nums">
-              {run.base_val_score.toFixed(3)}
-            </b>
-          </span>
-        )}
-        {run.val_count === 0 && (
-          <span className="rounded bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-400">
-            val 없음 — greedy 채택(검증 신뢰도 낮음)
-          </span>
-        )}
+        <span className="text-muted-foreground">예시 {run.example_count}</span>
         <a
           href={`/optimize/run?id=${run.id}`}
           className="ml-auto inline-flex items-center gap-1 text-[12px] font-medium text-muted-foreground hover:text-foreground"
@@ -343,22 +305,32 @@ function RunDetail({
         </div>
       )}
 
-      {steps.length > 0 && <LossChart run={run} steps={steps} />}
+      {run.aggregated_gap && (
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+            통합 격차 (이 노드가 받은 진단)
+          </div>
+          <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-[12.5px] leading-relaxed">
+            {run.aggregated_gap}
+          </pre>
+        </div>
+      )}
 
-      {/* steps */}
-      <div className="space-y-2">
-        {steps.map((s) => (
-          <StepCard key={s.idx} step={s} isBest={s.idx === run.best_step_idx} />
-        ))}
-      </div>
+      {run.candidate_prompt && (
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            후보 프롬프트 (optimizer 산출)
+          </div>
+          <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-[12.5px] leading-relaxed">
+            {run.candidate_prompt}
+          </pre>
+        </div>
+      )}
 
-      {/* review gate */}
       {run.status === "awaiting_review" && canEdit && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
           <span className="text-[12px] text-muted-foreground">
-            {run.best_step_idx !== null
-              ? `step ${run.best_step_idx}의 후보를 새 Evaluator 버전으로 승격할 수 있습니다.`
-              : "검증을 통과한 개선 후보가 없습니다."}
+            격차와 후보를 읽고 직접 판단하세요.
           </span>
           <div className="flex gap-2">
             <Button
@@ -369,147 +341,24 @@ function RunDetail({
             >
               폐기
             </Button>
-            {run.best_step_idx !== null && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => act(() => promoteRun(run.id, false))}
-                >
-                  승격 (비활성)
-                </Button>
-                <Button
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => act(() => promoteRun(run.id, true))}
-                >
-                  승격 + 활성화
-                </Button>
-              </>
-            )}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() => act(() => promoteRun(run.id, false))}
+            >
+              승격 (비활성)
+            </Button>
+            <Button size="sm" disabled={busy} onClick={() => act(() => promoteRun(run.id, true))}>
+              승격 + 활성화
+            </Button>
           </div>
         </div>
       )}
       {run.status === "promoted" && run.produced_prompt_id && (
         <div className="rounded-md bg-emerald-500/10 px-3 py-2 text-[13px] text-emerald-700 dark:text-emerald-400">
           <Check className="mr-1 inline size-3.5" />
-          새 Evaluator 버전으로 승격됨. ‘모델’ 탭에서 확인/활성화하세요.
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LossChart({ run, steps }: { run: OptRun; steps: OptStep[] }) {
-  // train_loss line (always present); base_val baseline if available.
-  const W = 520,
-    H = 150,
-    PL = 36,
-    PR = 16,
-    PT = 14,
-    PB = 26;
-  const vals = steps.map((s) => s.train_loss);
-  if (run.base_val_score !== null) vals.push(run.base_val_score);
-  const maxY = Math.max(1, ...vals) * 1.1;
-  const n = steps.length;
-  const x = (i: number) =>
-    PL + (n <= 1 ? 0 : (i / (n - 1)) * (W - PL - PR));
-  const y = (v: number) => PT + (1 - v / maxY) * (H - PT - PB);
-  const pts = steps.map((s, i) => `${x(i)},${y(s.train_loss)}`).join(" ");
-  return (
-    <div className="rounded-lg border bg-muted/30 p-2">
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
-        <line x1={PL} y1={y(0)} x2={W - PR} y2={y(0)} stroke="currentColor" className="text-border" />
-        {run.base_val_score !== null && (
-          <line
-            x1={PL}
-            y1={y(run.base_val_score)}
-            x2={W - PR}
-            y2={y(run.base_val_score)}
-            strokeDasharray="4 4"
-            stroke="currentColor"
-            className="text-muted-foreground/50"
-          />
-        )}
-        <polyline points={pts} fill="none" stroke="currentColor" strokeWidth={2.5}
-          className="text-foreground" strokeLinejoin="round" />
-        {steps.map((s, i) => (
-          <g key={i}>
-            <circle cx={x(i)} cy={y(s.train_loss)} r={4}
-              className={s.accepted ? "fill-emerald-500" : "fill-muted-foreground"} />
-            <text x={x(i)} y={H - 8} textAnchor="middle" className="fill-muted-foreground"
-              fontSize="10" fontFamily="ui-monospace,monospace">s{s.idx}</text>
-            <text x={x(i)} y={y(s.train_loss) - 8} textAnchor="middle" className="fill-foreground"
-              fontSize="10" fontFamily="ui-monospace,monospace" fontWeight="700">
-              {s.train_loss.toFixed(2)}
-            </text>
-          </g>
-        ))}
-      </svg>
-      <p className="px-1 text-[11px] text-muted-foreground">
-        train loss (점=스텝, 초록=채택){run.base_val_score !== null ? " · 점선=base val" : ""}
-      </p>
-    </div>
-  );
-}
-
-function StepCard({ step, isBest }: { step: OptStep; isBest: boolean }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div
-      className={cn(
-        "rounded-lg border p-3",
-        isBest && "border-emerald-500/40 bg-emerald-500/5"
-      )}
-    >
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 text-left"
-      >
-        <span className="text-[13px] font-medium">
-          step {step.idx}
-          {isBest && (
-            <span className="ml-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
-              ★ best
-            </span>
-          )}
-        </span>
-        <span className="flex items-center gap-2 text-[12px] text-muted-foreground tabular-nums">
-          train {step.train_loss.toFixed(3)}
-          {step.val_score !== null && ` · val ${step.val_score.toFixed(3)}`}
-          <span
-            className={cn(
-              "rounded-full px-2 py-0.5 text-[10px] font-medium",
-              step.accepted
-                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                : "bg-muted text-muted-foreground"
-            )}
-          >
-            {step.accepted ? "채택" : "기각"}
-          </span>
-        </span>
-      </button>
-      {open && (
-        <div className="mt-3 space-y-3">
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-              gradient ∂loss/∂prompt
-            </div>
-            <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-2.5 text-[12px] leading-relaxed">
-              {step.gradient_text || "—"}
-            </pre>
-          </div>
-          {step.candidate_prompt && (
-            <div>
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                후보 프롬프트
-              </div>
-              <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-2.5 text-[12px] leading-relaxed">
-                {step.candidate_prompt}
-              </pre>
-            </div>
-          )}
+          새 {run.target_kind} 버전으로 승격됨. ‘모델’ 탭에서 확인/활성화하세요.
         </div>
       )}
     </div>

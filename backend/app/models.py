@@ -181,10 +181,20 @@ class OptimizationRun(Base):
         sa.String(16), nullable=False, default="running", index=True
     )
     error: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    # Number of labeled examples used (no train/val split — comparison is
+    # the human's job, not an automatic gate).
     train_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
     val_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
     base_val_score: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
     best_step_idx: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    # The optimizer node (a versioned, improvable prompt) used for this run.
+    optimizer_prompt_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("prompts.id", ondelete="SET NULL"), nullable=True
+    )
+    # The consolidated, declarative gap description this node received, and
+    # the single candidate prompt the optimizer produced from it.
+    aggregated_gap: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    candidate_prompt: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
     produced_prompt_id: Mapped[uuid.UUID | None] = mapped_column(
         sa.ForeignKey("prompts.id", ondelete="SET NULL"), nullable=True
     )
@@ -199,6 +209,11 @@ class OptimizationRun(Base):
         back_populates="run",
         cascade="all, delete-orphan",
         order_by="OptimizationStep.idx",
+    )
+    items: Mapped[list["OptimizationItem"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="OptimizationItem.created_at",
     )
 
 
@@ -227,6 +242,35 @@ class OptimizationStep(Base):
     )
 
     run: Mapped[OptimizationRun] = relationship(back_populates="steps")
+
+
+class OptimizationItem(Base):
+    """One labeled example's pass through the new pipeline: the node's
+    forward output, the descriptive loss (ideal vs current, no number), and
+    the declarative backward feedback (cause + gap, non-imperative)."""
+
+    __tablename__ = "optimization_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("optimization_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True
+    )
+    spec: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    forward_output: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    loss_text: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    backward_text: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+
+    run: Mapped[OptimizationRun] = relationship(back_populates="items")
 
 
 class Feedback(Base):

@@ -1,4 +1,9 @@
-"""Optimizer API — start runs, poll progress, promote/discard candidates."""
+"""Optimizer API — descriptive, human-gated.
+
+Start a run (one forward→loss→backward→aggregate→optimizer pass), poll it,
+read the per-example gaps + the single candidate prompt, and promote or
+discard by hand. No automatic scalar/gate.
+"""
 
 from __future__ import annotations
 
@@ -15,27 +20,19 @@ from app.core.database import AsyncSessionLocal, get_session
 from app.core.identity import optional_identity, require_identity
 from app.models import (
     Feedback,
+    OptimizationItem,
     OptimizationRun,
-    OptimizationStep,
     Prompt,
     Session,
 )
-from app.optimizer import assign_split, run_optimization
+from app.optimizer import run_optimization
 from app.routes.prompts import get_active_prompt, prompt_out
 
 router = APIRouter(prefix="/api", tags=["optimize"])
 
-LOSS_BY_KIND = {"evaluator": "rationale_recovery", "generator": "understandability"}
+TARGET_KINDS = ("evaluator", "generator")
 
 DEFAULT_CONFIG = {
-    "n_iters": 3,
-    "batch_size": 4,
-    # Length regularization is off for now (effectively unconstrained); the
-    # UI no longer exposes it. Re-lower to re-enable.
-    "length_cap": 4000,
-    "w_choice": 0.4,
-    "w_cov": 0.6,
-    "stop": 0.05,
     "model": settings.default_model,
     "judge_model": settings.default_model,
     "eval_max_tokens": 1200,
@@ -48,38 +45,36 @@ DEFAULT_CONFIG = {
 # ---- serialization ---------------------------------------------------------
 
 
-def run_out(run: OptimizationRun, steps: list[OptimizationStep] | None = None) -> dict:
+def run_out(run: OptimizationRun, items: list[OptimizationItem] | None = None) -> dict:
     d = {
         "id": str(run.id),
         "target_kind": run.target_kind,
         "base_prompt_id": str(run.base_prompt_id),
-        "loss_type": run.loss_type,
-        "config": run.config,
+        "optimizer_prompt_id": (
+            str(run.optimizer_prompt_id) if run.optimizer_prompt_id else None
+        ),
         "status": run.status,
         "error": run.error,
-        "train_count": run.train_count,
-        "val_count": run.val_count,
-        "base_val_score": run.base_val_score,
-        "best_step_idx": run.best_step_idx,
+        "example_count": run.train_count,
+        "aggregated_gap": run.aggregated_gap,
+        "candidate_prompt": run.candidate_prompt,
         "produced_prompt_id": (
             str(run.produced_prompt_id) if run.produced_prompt_id else None
         ),
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
-    if steps is not None:
-        d["steps"] = [step_out(s) for s in steps]
+    if items is not None:
+        d["items"] = [item_out(i) for i in items]
     return d
 
 
-def step_out(s: OptimizationStep) -> dict:
+def item_out(i: OptimizationItem) -> dict:
     return {
-        "idx": s.idx,
-        "train_loss": s.train_loss,
-        "val_score": s.val_score,
-        "gradient_text": s.gradient_text,
-        "candidate_prompt": s.candidate_prompt,
-        "accepted": s.accepted,
-        "records": s.records,
+        "session_id": str(i.session_id) if i.session_id else None,
+        "spec": i.spec,
+        "forward_output": i.forward_output,
+        "loss_text": i.loss_text,
+        "backward_text": i.backward_text,
     }
 
 
@@ -97,19 +92,15 @@ async def dataset_stats(
         .join(Feedback, Feedback.session_id == Session.id)
     )
     rows = res.scalars().all()
-    train = val = disagree = 0
-    for s in rows:
-        split = s.split if s.split in ("train", "val") else assign_split(s.id)
-        if split == "val":
-            val += 1
-        else:
-            train += 1
-        if s.evaluation and s.feedback and s.evaluation.winner != s.feedback.choice:
-            disagree += 1
+    with_reason = sum(1 for s in rows if s.feedback and s.feedback.reason.strip())
+    disagree = sum(
+        1
+        for s in rows
+        if s.evaluation and s.feedback and s.evaluation.winner != s.feedback.choice
+    )
     return {
         "labeled": len(rows),
-        "train": train,
-        "val": val,
+        "with_reason": with_reason,
         "disagreements": disagree,
     }
 
@@ -120,7 +111,6 @@ async def dataset_stats(
 class OptimizeIn(BaseModel):
     target_kind: str = "evaluator"
     base_prompt_id: UUID | None = None
-    loss_type: str = "rationale_recovery"
     config: dict = Field(default_factory=dict)
 
 
@@ -130,15 +120,11 @@ async def start_optimize(
     background: BackgroundTasks,
     coders_id: UUID = Depends(require_identity),
 ) -> dict:
-    if body.target_kind not in LOSS_BY_KIND:
+    if body.target_kind not in TARGET_KINDS:
         raise HTTPException(400, "target_kind must be 'evaluator' or 'generator'.")
-    loss_type = LOSS_BY_KIND[body.target_kind]
 
     from app.routes.users import upsert_local_user
 
-    # Own short-lived transaction so the run is durably committed BEFORE the
-    # background task (and before the response) — not racing get_session's
-    # deferred commit against BackgroundTasks ordering.
     async with AsyncSessionLocal() as session:
         async with session.begin():
             if body.base_prompt_id:
@@ -152,28 +138,22 @@ async def start_optimize(
             if base is None or base.kind != body.target_kind:
                 raise HTTPException(400, "base 프롬프트를 찾을 수 없습니다.")
 
-            cfg = {**DEFAULT_CONFIG, **(body.config or {})}
-            cfg["n_iters"] = max(1, min(int(cfg["n_iters"]), 8))
-            cfg["batch_size"] = max(1, min(int(cfg["batch_size"]), 16))
-            cfg["length_cap"] = max(120, min(int(cfg["length_cap"]), 4000))
-            for m in ("model", "judge_model"):
-                if cfg[m] not in settings.allowed_model_list:
-                    cfg[m] = settings.default_model
+            optimizer = await get_active_prompt(session, "optimizer")
+            if optimizer is None:
+                raise HTTPException(400, "활성 Optimizer 노드가 없습니다.")
 
-            # Generator runs are judged by the trusted active Evaluator;
-            # pin it for reproducibility.
-            if body.target_kind == "generator":
-                judge = await get_active_prompt(session, "evaluator")
-                if judge is None:
-                    raise HTTPException(400, "판정용 활성 Evaluator가 없습니다.")
-                cfg["judge_eval_id"] = str(judge.id)
+            cfg = {**DEFAULT_CONFIG, **(body.config or {})}
+            for m in ("model", "judge_model"):
+                if cfg.get(m) not in settings.allowed_model_list:
+                    cfg[m] = settings.default_model
 
             user = await upsert_local_user(session, coders_id)
             run = OptimizationRun(
                 id=uuid4(),
                 target_kind=body.target_kind,
                 base_prompt_id=base.id,
-                loss_type=loss_type,
+                optimizer_prompt_id=optimizer.id,
+                loss_type="descriptive",
                 config=cfg,
                 status="running",
                 created_by=user.id,
@@ -203,7 +183,7 @@ async def get_run(
 ) -> dict:
     res = await session.execute(
         select(OptimizationRun)
-        .options(selectinload(OptimizationRun.steps))
+        .options(selectinload(OptimizationRun.items))
         .where(OptimizationRun.id == run_id)
     )
     run = res.scalar_one_or_none()
@@ -212,7 +192,7 @@ async def get_run(
     base = (
         await session.execute(select(Prompt).where(Prompt.id == run.base_prompt_id))
     ).scalar_one_or_none()
-    out = run_out(run, list(run.steps))
+    out = run_out(run, list(run.items))
     out["base_prompt"] = prompt_out(base) if base else None
     return out
 
@@ -232,19 +212,15 @@ async def promote_run(
     _: UUID = Depends(require_identity),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    res = await session.execute(
-        select(OptimizationRun)
-        .options(selectinload(OptimizationRun.steps))
-        .where(OptimizationRun.id == run_id)
-    )
-    run = res.scalar_one_or_none()
+    run = (
+        await session.execute(
+            select(OptimizationRun).where(OptimizationRun.id == run_id)
+        )
+    ).scalar_one_or_none()
     if run is None:
         raise HTTPException(404, "run not found")
-    if run.best_step_idx is None:
-        raise HTTPException(400, "승격할 개선 후보가 없습니다 (검증을 통과한 스텝 없음).")
-    best = next((s for s in run.steps if s.idx == run.best_step_idx), None)
-    if best is None or not best.candidate_prompt:
-        raise HTTPException(400, "후보 프롬프트를 찾을 수 없습니다.")
+    if not run.candidate_prompt:
+        raise HTTPException(400, "승격할 후보 프롬프트가 없습니다.")
 
     base = (
         await session.execute(select(Prompt).where(Prompt.id == run.base_prompt_id))
@@ -268,11 +244,11 @@ async def promote_run(
         kind=run.target_kind,
         version=next_version,
         name=body.name or f"opt v{next_version} (run {str(run.id)[:8]})",
-        template=best.candidate_prompt,
+        template=run.candidate_prompt,
         model=base.model,
         max_tokens=base.max_tokens,
         temperature=base.temperature,
-        notes=f"optimizer 산출 · base v{base.version} · val {run.base_val_score}→{best.val_score}",
+        notes=f"optimizer 산출 · base v{base.version}",
         is_active=body.activate,
     )
     session.add(p)
