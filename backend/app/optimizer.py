@@ -342,6 +342,7 @@ async def run_optimization(run_id: UUID) -> None:
         prompt = base_text
         best_val = base_val if base_val is not None else float("inf")
         best_idx: int | None = None
+        best_score = float("inf")  # selection score: val if available, else train
         n_iters = cfg.get("n_iters", 3)
         batch_size = cfg.get("batch_size", 4)
         stop = cfg.get("stop", 0.05)
@@ -382,9 +383,14 @@ async def run_optimization(run_id: UUID) -> None:
 
             if accepted and candidate:
                 prompt = candidate
-                best_idx = i
                 if val_score is not None:
                     best_val = val_score
+                # Best step to promote: lowest val if we have a held-out set,
+                # else lowest train loss (avoids promoting a worse 'last' step).
+                score = val_score if val_score is not None else train_loss
+                if score < best_score:
+                    best_score = score
+                    best_idx = i
             if train_loss <= stop:
                 break
 
