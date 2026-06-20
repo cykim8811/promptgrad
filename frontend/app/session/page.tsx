@@ -2,8 +2,15 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { Archive, ArchiveRestore, ArrowLeft, Check, Loader2 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  Archive,
+  ArchiveRestore,
+  ArrowLeft,
+  Check,
+  Loader2,
+  RefreshCw,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,11 +20,14 @@ import { SignInLink } from "@/components/SignIn";
 import { cn } from "@/lib/utils";
 import { useMe } from "@/lib/identity";
 import {
+  createSession,
   evaluateSession,
+  fetchPrompts,
   fetchSession,
   setSessionArchived,
   submitFeedback,
   type Card,
+  type Prompt,
   type SessionDetail,
 } from "@/lib/api";
 
@@ -99,6 +109,8 @@ function SessionView() {
         <BackLink />
         <ArchiveButton session={session} onUpdate={setSession} />
       </div>
+
+      <RerunControl session={session} />
 
       {/* Spec */}
       <section className="space-y-3 rounded-xl border p-5">
@@ -222,6 +234,125 @@ function ArchiveButton({
         </>
       )}
     </button>
+  );
+}
+
+function RerunControl({ session }: { session: SessionDetail }) {
+  const me = useMe();
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [prompts, setPrompts] = useState<Record<string, Prompt[]> | null>(null);
+  const [genId, setGenId] = useState(session.generator?.id ?? "");
+  const [evalId, setEvalId] = useState(session.evaluator?.id ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open && !prompts) fetchPrompts().then(setPrompts).catch(() => {});
+  }, [open, prompts]);
+
+  if (!me) return null;
+
+  async function rerun() {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const s = await createSession({
+        spec: session.spec,
+        audience: session.audience,
+        generator_prompt_id: genId || undefined,
+        evaluator_prompt_id: evalId || undefined,
+      });
+      router.push(`/session?id=${s.id}`);
+    } catch (e) {
+      setErr((e as Error).message);
+      setBusy(false);
+    }
+  }
+
+  if (!open)
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <RefreshCw className="size-3.5" />
+        다른 모델로 재실행
+      </button>
+    );
+
+  return (
+    <div className="space-y-3 rounded-xl border p-4">
+      <div className="flex items-center justify-between">
+        <span className="text-[13px] font-medium">같은 명세를 다른 모델로 재실행</span>
+        <button
+          onClick={() => setOpen(false)}
+          className="text-[12px] text-muted-foreground hover:text-foreground"
+        >
+          닫기
+        </button>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <ModelPick
+          label="Generator"
+          value={genId}
+          onChange={setGenId}
+          options={prompts?.generator ?? []}
+        />
+        <ModelPick
+          label="Evaluator"
+          value={evalId}
+          onChange={setEvalId}
+          options={prompts?.evaluator ?? []}
+        />
+      </div>
+      <div className="flex items-center justify-between gap-3 border-t pt-3">
+        <span className="text-[12px] text-muted-foreground">
+          {err ? (
+            <span className="text-destructive">{err}</span>
+          ) : busy ? (
+            "Generator가 새로 생성하는 중…"
+          ) : (
+            "현재 세션의 명세·대상으로 새 세션을 만듭니다."
+          )}
+        </span>
+        <Button size="sm" onClick={rerun} disabled={busy}>
+          <RefreshCw className="size-3.5" />
+          {busy ? "생성 중…" : "재실행"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ModelPick({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: Prompt[];
+}) {
+  return (
+    <label className="block space-y-1.5">
+      <span className="text-[12px] text-muted-foreground">{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="block w-full rounded-md border bg-background px-3 py-2 text-[13px] focus:border-foreground/40 focus:outline-none"
+      >
+        <option value="">활성 버전 (기본)</option>
+        {options.map((p) => (
+          <option key={p.id} value={p.id}>
+            v{p.version} · {p.name} ({p.model}){p.is_active ? " · 활성" : ""}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
