@@ -133,7 +133,6 @@ function NewRun({ onStarted }: { onStarted: (r: OptRun) => void }) {
   const [baseId, setBaseId] = useState("");
   const [nIters, setNIters] = useState(3);
   const [batch, setBatch] = useState(4);
-  const [lengthCap, setLengthCap] = useState(600);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -152,7 +151,7 @@ function NewRun({ onStarted }: { onStarted: (r: OptRun) => void }) {
         target_kind: "evaluator",
         loss_type: "rationale_recovery",
         base_prompt_id: baseId || undefined,
-        config: { n_iters: nIters, batch_size: batch, length_cap: lengthCap },
+        config: { n_iters: nIters, batch_size: batch },
       });
       onStarted(r);
     } catch (e) {
@@ -205,17 +204,6 @@ function NewRun({ onStarted }: { onStarted: (r: OptRun) => void }) {
             max={16}
             value={batch}
             onChange={(e) => setBatch(Number(e.target.value))}
-            className="block w-full rounded-md border bg-transparent px-3 py-2 text-[13px] tabular-nums focus:border-foreground/40 focus:outline-none"
-          />
-        </Field>
-        <Field label="길이 상한(자) · 정칙화">
-          <input
-            type="number"
-            min={120}
-            max={4000}
-            step={20}
-            value={lengthCap}
-            onChange={(e) => setLengthCap(Number(e.target.value))}
             className="block w-full rounded-md border bg-transparent px-3 py-2 text-[13px] tabular-nums focus:border-foreground/40 focus:outline-none"
           />
         </Field>

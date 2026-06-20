@@ -30,7 +30,9 @@ LOSS_TYPES = ("rationale_recovery",)
 DEFAULT_CONFIG = {
     "n_iters": 3,
     "batch_size": 4,
-    "length_cap": 600,
+    # Length regularization is off for now (effectively unconstrained); the
+    # UI no longer exposes it. Re-lower to re-enable.
+    "length_cap": 4000,
     "w_choice": 0.4,
     "w_cov": 0.6,
     "stop": 0.05,
